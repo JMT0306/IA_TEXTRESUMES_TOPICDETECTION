@@ -3,20 +3,25 @@ from preprocessing import preprocess_text
 from models import create_bow, apply_kmeans, apply_lda
 
 
-def generate_summary(document, topic_keywords):
+def generate_summary(document, topic_keywords, num_sentences=3):
     """
-    Gera um resumo simples selecionando frases relevantes do texto original.
+    Gera um resumo baseado nas palavras-chave e frases mais relevantes.
     """
     sentences = document.split('.')
+    sentences = [s.strip() for s in sentences if s.strip()]
+
     summary = []
     for sentence in sentences:
         if any(keyword in sentence.lower() for keyword in topic_keywords):
-            summary.append(sentence.strip())
-    return '. '.join(summary) + '.'
+            summary.append(sentence)
+        if len(summary) >= num_sentences:
+            break
+
+    return '. '.join(summary) + '.' if summary else "Não foi possível gerar um resumo."
 
 
 # Configuração da Interface
-st.title("Sistema de Deteção de Tópicos e Recomendações")
+st.title("Sistema de Deteção de Tópicos, Resumos e Análise de Textos Académicos")
 st.write("Faça upload de textos académicos ou insira o seu texto para análise.")
 
 # Input de texto manual
@@ -28,61 +33,64 @@ uploaded_files = st.file_uploader("Faça upload de ficheiros (.txt):", accept_mu
 # Processamento de textos
 documents = []
 
+# Ler textos inseridos manualmente
 if user_input:
     documents.append(user_input)
 
+# Ler ficheiros carregados
 if uploaded_files:
     for file in uploaded_files:
         try:
-            documents.append(file.read().decode("utf-8"))
+            content = file.read().decode("utf-8")
+            if content.strip():
+                documents.append(content)
         except UnicodeDecodeError:
-            documents.append(file.read().decode("latin-1"))  # Fallback
+            try:
+                content = file.read().decode("latin-1")
+                if content.strip():
+                    documents.append(content)
+            except Exception as e:
+                st.warning(f"Erro ao ler o ficheiro '{file.name}': {e}")
 
-if documents:
-    st.write(f"**{len(documents)} textos carregados com sucesso!**")
+if not documents:
+    st.error("Nenhum texto válido foi carregado. Insira texto ou faça upload de ficheiros corretos.")
+    st.stop()
 
-    # Pré-processamento
-    preprocessed_docs = [preprocess_text(doc) for doc in documents]
+st.write(f"**{len(documents)} textos carregados com sucesso!**")
 
-    # Bag-of-Words
-    bow_matrix, vectorizer = create_bow(preprocessed_docs)
+# Pré-processamento
+preprocessed_docs = [preprocess_text(doc) for doc in documents]
+preprocessed_docs = [doc for doc in preprocessed_docs if len(doc) > 0]
 
-    # Clusterização com k-means
-    num_clusters = st.slider("Número de clusters:", min_value=2, max_value=10, value=2)
-    kmeans = apply_kmeans(bow_matrix, num_clusters)
+if not preprocessed_docs:
+    st.error("Todos os documentos estão vazios após o pré-processamento. Verifique os textos.")
+    st.stop()
 
-    # Exibir clusters
-    st.write("**Clusters atribuídos:**")
-    for i, cluster in enumerate(kmeans.labels_):
-        st.write(f"Documento {i + 1}: Cluster {cluster}")
+# Bag-of-Words
+bow_matrix, vectorizer = create_bow(preprocessed_docs)
 
-    # Modelagem de tópicos com LDA
-    lda_model, corpus, dictionary = apply_lda(preprocessed_docs, num_topics=num_clusters)
+# Clusterização com k-means
+num_clusters = st.slider("Número de clusters:", min_value=2, max_value=10, value=2)
+if len(preprocessed_docs) < num_clusters:
+    num_clusters = len(preprocessed_docs)
+kmeans = apply_kmeans(bow_matrix, num_clusters)
 
-    st.write("**Tópicos gerados pelo LDA:**")
-    for idx, topic in lda_model.print_topics(num_words=10):  # Mostrar 10 palavras por tópico
-        st.write(f"Tópico {idx + 1}: {topic}")
+# Exibir clusters
+st.write("**Clusters atribuídos:**")
+for i, cluster in enumerate(kmeans.labels_):
+    st.write(f"Documento {i + 1}: Cluster {cluster}")
 
-    # Extrair palavras-chave do primeiro tópico
-    topic_keywords = [word for word, _ in lda_model.show_topic(0, topn=5)]
+# Modelagem de tópicos com LDA
+lda_model, corpus, dictionary = apply_lda(preprocessed_docs, num_topics=num_clusters)
 
-    # Recomendações
-    if st.button("Gerar Recomendações"):
-        recommendations = []
-        for i, doc in enumerate(preprocessed_docs):
-            if any(keyword in doc for keyword in topic_keywords):
-                recommendations.append(documents[i])
+st.write("**Tópicos gerados pelo LDA:**")
+for idx, topic in lda_model.print_topics(num_words=10):
+    st.write(f"Tópico {idx + 1}: {topic}")
 
-        st.write("**Documentos recomendados com base no primeiro tópico:**")
-        if recommendations:
-            for rec in recommendations:
-                st.write(f"- {rec}")
-        else:
-            st.write("Nenhuma recomendação encontrada.")
+# Extrair palavras-chave do primeiro tópico
+topic_keywords = [word for word, _ in lda_model.show_topic(0, topn=5)]
 
-    # Resumo baseado no primeiro tópico
-    st.write("**Resumo gerado com base no primeiro tópico:**")
-    summary = generate_summary(documents[0], topic_keywords)
-    st.write(summary)
-else:
-    st.write("**Nenhum texto carregado. Insira ou faça upload de textos.**")
+# Resumo baseado no primeiro tópico
+st.write("**Resumo gerado com base no primeiro tópico:**")
+summary = generate_summary(documents[0], topic_keywords)
+st.write(summary)
